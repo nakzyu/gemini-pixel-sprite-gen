@@ -11,7 +11,7 @@ argument-hint: "[what to generate, or: list / delete / organize]"
 You generate and manage 2D game sprites via Google Gemini (browser cookie auth, `gemini_webapi`).
 The Python script at `${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py` is a dumb pipe — it sends your prompt to Gemini and saves the result. **You are the creative brain.**
 
-All parameters (`--name`, `--category`, `--size`, `--session`) are decided by you based on context. The user never needs to specify these directly.
+All parameters (`--name`, `--category`, `--session`) are decided by you based on context. The user never needs to specify these directly.
 
 ## User Request: $ARGUMENTS
 
@@ -29,18 +29,12 @@ Infer from the subject:
 - **effect**: explosions, sparkles, fire, smoke, magic, particles
 - **ui**: buttons, health bars, menus, icons, cursors, frames
 
-### Size
-- Use the user's explicit size if given (e.g. "32px", "64px")
-- Otherwise use the default from config (typically 32)
-- For tiles, 16 or 32 is common; for UI elements, 32 or 64
-
 ### Name
 - Generate a short, descriptive snake_case name from the subject
 - e.g. "cute green slime" → `green_slime`, "fire mage with staff" → `fire_mage`
 
 ### Background
-- Game sprites meant for extraction → "solid magenta (#FF00FF) background" (better for chroma key)
-- General/standalone art → "transparent background"
+- Default → "transparent background"
 - If the user specifies, use what they say
 
 ### Session
@@ -110,7 +104,7 @@ Translate the user's intent into an English prompt for Gemini:
 
 - Include ONLY what the user expressed (directly or through Q&A)
 - Be specific and visual
-- Add technical constraints at the end: size, single sprite, background type
+- Add technical constraints at the end: single sprite, background type
 
 For follow-ups in an existing session, reference the previous generation naturally:
 - "same warrior but in a walking pose, left foot forward"
@@ -122,7 +116,6 @@ For follow-ups in an existing session, reference the previous generation natural
 python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" generate "<your crafted prompt>" \
   --output-dir "<from config>" \
   --name <inferred_name> \
-  --size <inferred_size> \
   --category <inferred_category> \
   --session <inferred_session>
 ```
@@ -148,7 +141,6 @@ When generating multiple frames (walk cycle, attack animation, etc.):
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" sheet "<name>" \
   --output-dir "<from config>" \
-  --size <size> \
   --category <category> \
   --frames '<json: [{"name":"idle","description":"..."},{"name":"walk1","description":"..."}]>'
 ```
@@ -156,7 +148,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" sheet "<name>" \
 The sheet command automatically uses the sheet name as the session.
 
 Describe each frame relative to the anchor:
-- Frame 1 (anchor): "16-bit warrior, front-facing idle, dark armor, red cape, pixel art, 32x32"
+- Frame 1 (anchor): "16-bit warrior, front-facing idle, dark armor, red cape, pixel art"
 - Frame 2: "same warrior, left foot forward, walking pose"
 - Frame 3: "same warrior, right foot forward, walking pose"
 
@@ -204,8 +196,7 @@ If it doesn't exist or fails, run setup:
 mkdir -p "${CLAUDE_PLUGIN_DATA}"
 cat > "${CLAUDE_PLUGIN_DATA}/config.json" << 'EOF'
 {
-  "output_dir": "<user's answer>",
-  "default_size": 32
+  "output_dir": "<user's answer>"
 }
 EOF
 ```

@@ -166,7 +166,6 @@ def save_session(output_dir: Path, session_name: str, metadata: list,
                 "filename": sprite_entry.get("filename"),
                 "path": sprite_entry.get("path"),
                 "category": sprite_entry.get("category"),
-                "size": sprite_entry.get("size"),
             }
         existing.setdefault("history", []).append(turn)
 
@@ -241,7 +240,7 @@ async def cmd_check():
 
 
 async def cmd_generate(output_dir: Path, description: str, name: str | None,
-                       size: int, category: str, session_name: str | None = None,
+                       category: str, session_name: str | None = None,
                        quiet: bool = False) -> dict | None:
     """Generate a single sprite. Uses chat session if session_name is provided."""
     if category not in CATEGORIES:
@@ -317,7 +316,6 @@ async def cmd_generate(output_dir: Path, description: str, name: str | None,
             "filename": filename,
             "path": str(output_path),
             "category": category,
-            "size": size,
             "description": description,
             "session": session_name,
             "created_at": datetime.now().isoformat(),
@@ -340,7 +338,7 @@ async def cmd_generate(output_dir: Path, description: str, name: str | None,
 
 
 async def cmd_sheet(output_dir: Path, sheet_name: str, frames_json: str,
-                    size: int, category: str, session_name: str | None = None):
+                    category: str, session_name: str | None = None):
     """Generate multiple sprites and combine into a spritesheet.
     Uses a shared session across all frames for style consistency."""
     if not Image:
@@ -357,7 +355,7 @@ async def cmd_sheet(output_dir: Path, sheet_name: str, frames_json: str,
             output_dir=output_dir,
             description=frame["description"],
             name=frame.get("name"),
-            size=size, category=category,
+            category=category,
             session_name=effective_session,
             quiet=True,
         )
@@ -368,13 +366,24 @@ async def cmd_sheet(output_dir: Path, sheet_name: str, frames_json: str,
         print(json.dumps({"success": False, "error": "No sprites were generated."}))
         return
 
-    cols = len(results)
-    sheet = Image.new("RGBA", (size * cols, size), (0, 0, 0, 0))
-    for i, entry in enumerate(results):
+    # Combine into horizontal strip using actual image sizes
+    images = []
+    for entry in results:
         sprite_path = Path(entry["path"])
         if sprite_path.exists():
-            sprite = Image.open(sprite_path).convert("RGBA")
-            sheet.paste(sprite, (i * size, 0))
+            images.append(Image.open(sprite_path).convert("RGBA"))
+
+    if not images:
+        print(json.dumps({"success": False, "error": "No sprite images found."}))
+        return
+
+    max_h = max(img.height for img in images)
+    total_w = sum(img.width for img in images)
+    sheet = Image.new("RGBA", (total_w, max_h), (0, 0, 0, 0))
+    x_offset = 0
+    for img in images:
+        sheet.paste(img, (x_offset, 0))
+        x_offset += img.width
 
     sheet_dir = output_dir / "sheets"
     sheet_dir.mkdir(parents=True, exist_ok=True)
@@ -386,7 +395,7 @@ async def cmd_sheet(output_dir: Path, sheet_name: str, frames_json: str,
     print(json.dumps({
         "success": True,
         "sheet_path": str(sheet_path),
-        "sprite_count": cols,
+        "sprite_count": len(images),
         "session": effective_session,
     }, indent=2))
 
@@ -474,8 +483,8 @@ async def main():
     if len(sys.argv) < 2:
         print("Usage:")
         print("  sprite_gen.py check")
-        print("  sprite_gen.py generate <desc> --output-dir DIR [--name N] [--size 32] [--category character] [--session NAME]")
-        print("  sprite_gen.py sheet <name> --output-dir DIR --frames '<json>' [--size 32] [--category character] [--session NAME]")
+        print("  sprite_gen.py generate <desc> --output-dir DIR [--name N] [--category character] [--session NAME]")
+        print("  sprite_gen.py sheet <name> --output-dir DIR --frames '<json>' [--category character] [--session NAME]")
         print("  sprite_gen.py list --output-dir DIR [--category CAT]")
         print("  sprite_gen.py delete <name> --output-dir DIR")
         print("  sprite_gen.py organize --output-dir DIR")
@@ -500,7 +509,6 @@ async def main():
             output_dir=output_dir,
             description=sys.argv[2],
             name=opts.get("name"),
-            size=int(opts.get("size", 32)),
             category=opts.get("category", "character"),
             session_name=opts.get("session"),
         )
@@ -513,7 +521,6 @@ async def main():
             output_dir=output_dir,
             sheet_name=sys.argv[2],
             frames_json=opts.get("frames", "[]"),
-            size=int(opts.get("size", 32)),
             category=opts.get("category", "character"),
             session_name=opts.get("session"),
         )
