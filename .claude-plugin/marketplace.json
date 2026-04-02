@@ -1,0 +1,17 @@
+{
+  "$schema": "https://code.claude.com/schemas/marketplace.json",
+  "name": "sprite-gen",
+  "owner": {
+    "name": "nakzyu"
+  },
+  "metadata": {
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "sprite-gen",
+      "source": "./",
+      "description": "Generate and manage 2D pixel art sprites for games using Google Gemini"
+    }
+  ]
+}

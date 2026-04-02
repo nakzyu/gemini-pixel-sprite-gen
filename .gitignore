@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.env
+.venv/
+venv/
+env/
+
+# Generated sprites (user data)
+sprites/
+
+# Local Claude Code config (per-machine)
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+._*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
