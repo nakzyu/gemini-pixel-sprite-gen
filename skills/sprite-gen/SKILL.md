@@ -11,7 +11,67 @@ argument-hint: "[what to generate, or: list / delete / organize]"
 You generate and manage 2D game sprites via Google Gemini (browser cookie auth, `gemini_webapi`).
 The Python script at `${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py` is a dumb pipe — it sends your prompt to Gemini and saves the result. **You are the creative brain.**
 
+All parameters (`--name`, `--category`, `--size`, `--session`) are decided by you based on context. The user never needs to specify these directly.
+
 ## User Request: $ARGUMENTS
+
+---
+
+## Auto-Inference Rules
+
+You must infer the following from the user's request. Never ask the user to specify these unless genuinely ambiguous.
+
+### Category
+Infer from the subject:
+- **character**: people, monsters, creatures, NPCs, enemies, bosses
+- **item**: weapons, potions, keys, coins, armor, accessories
+- **tile**: ground, walls, water, grass, floor, terrain
+- **effect**: explosions, sparkles, fire, smoke, magic, particles
+- **ui**: buttons, health bars, menus, icons, cursors, frames
+
+### Size
+- Use the user's explicit size if given (e.g. "32px", "64px")
+- Otherwise use the default from config (typically 32)
+- For tiles, 16 or 32 is common; for UI elements, 32 or 64
+
+### Name
+- Generate a short, descriptive snake_case name from the subject
+- e.g. "cute green slime" → `green_slime`, "fire mage with staff" → `fire_mage`
+
+### Background
+- Game sprites meant for extraction → "solid magenta (#FF00FF) background" (better for chroma key)
+- General/standalone art → "transparent background"
+- If the user specifies, use what they say
+
+### Session
+- **New subject** (first time generating this character/thing) → start a new session, name it after the subject
+- **Same subject as before** (user references previous sprite, asks for variations, adjustments, or related poses) → reuse the existing session
+- **Different subject** → end the previous session, start a new one
+- **Sprite sheets** → automatically use the sheet name as session
+- When in doubt, check active sessions and the manifest to see what was generated recently
+
+---
+
+## Session Resume
+
+When the user wants to continue previous work (e.g. "이전에 뭐했었지?", "resume", "continue", "list sessions"):
+
+1. Run `sessions` command to get full history:
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" sessions --output-dir "<from config>"
+```
+
+2. Present the sessions naturally — show what was generated in each session, with thumbnail previews (Read the latest sprite image from each session)
+
+3. When the user picks a session to resume, use that session name for the next `generate` call. Gemini will have the full conversation context restored.
+
+Example flow:
+- User: "이전에 뭐 하고 있었지?"
+- You: fetch sessions, show list like:
+  - **warrior** (3 sprites) — idle, walk, attack poses. Last: 2h ago
+  - **slime** (1 sprite) — green bouncy slime. Last: 1h ago
+- User: "전사 이어서 하자"
+- You: resume the `warrior` session, generate the next sprite in that context
 
 ---
 
@@ -19,81 +79,70 @@ The Python script at `${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py` is a dumb pipe 
 
 ### Phase 1: Understand
 
-Read the user's request. Classify it:
+Read the user's request:
 
-- **Enough detail** (style, view, purpose are clear) → go to Phase 2
-- **Vague** (e.g. "warrior character 32px") → ask only what's missing. Pick 2-3 from:
+- **Clear enough** → go straight to Phase 3 (prompt crafting)
+- **Vague** (missing critical details that would lead to a bad result) → ask 2-3 questions, conversationally. Pick from:
   - Art style: pixel art, 16bit retro, hand-drawn, anime, chibi, voxel…
   - View: front, side, top-down, isometric, 3/4…
   - Game context: RPG, platformer, roguelike, mobile…
   - Mood/palette: dark, colorful, pastel, limited palette…
-  - Background: transparent, solid magenta (#FF00FF, good for chroma key), solid color…
   - Reference: any game or image to resemble?
 
-Keep it conversational. Don't dump all questions at once.
+Don't ask about things you can reasonably decide yourself. Only ask when the answer genuinely changes the output.
 
-### Phase 2: Creative Brief
+### Phase 2: Creative Brief (complex requests only)
 
-For simple requests (single sprite, clear intent), skip this — go straight to Phase 3.
+Skip for simple, single-sprite requests.
 
-For complex requests (sprite sheet, multiple variants, specific art direction), write a 2-3 line brief before generating:
+For complex requests (sprite sheet, multiple variants, specific art direction), write a 2-3 line brief:
 
 ```
 Brief: 16-bit JRPG warrior, front-facing idle pose. Dark steel armor with red cape.
        Limited 32-color palette, NES-inspired. Transparent background.
-       Reference: Final Fantasy VI sprite style.
 ```
 
-Show the brief to the user. If they approve (or you're confident), proceed.
+Show it, then proceed unless the user objects.
 
 ### Phase 3: Craft Prompt
 
-Translate the user's intent into an English prompt for Gemini. Rules:
+Translate the user's intent into an English prompt for Gemini:
 
 - Include ONLY what the user expressed (directly or through Q&A)
-- Write in plain English, be specific and visual
-- End with technical constraints: size, single sprite, background type
-- For game sprites, "solid magenta (#FF00FF) background" often works better than "transparent" for clean extraction
+- Be specific and visual
+- Add technical constraints at the end: size, single sprite, background type
 
-Example prompts:
-- `"16-bit RPG warrior sprite, front-facing idle pose, dark steel armor with red cape, NES-inspired limited palette, solid magenta background, single 32x32 sprite"`
-- `"cute slime monster, side view, bouncy shape, green translucent body, pixel art style, 64x64, transparent background"`
+For follow-ups in an existing session, reference the previous generation naturally:
+- "same warrior but in a walking pose, left foot forward"
+- "adjust the colors to be darker, keep everything else the same"
 
 ### Phase 4: Generate
 
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" generate "<your crafted prompt>" \
   --output-dir "<from config>" \
-  --name <short_name> \
-  --size <size> \
-  --category <category>
+  --name <inferred_name> \
+  --size <inferred_size> \
+  --category <inferred_category> \
+  --session <inferred_session>
 ```
 
-### Phase 5: Validate & Show
+### Phase 5: Show Result
 
 1. Display the image with Read tool
-2. Check: does it match the brief? Is the style consistent?
-3. If the image looks off, tell the user what went wrong and offer to regenerate with an adjusted prompt
-
-### Phase 6: Iterate
-
-Ask if they want changes. Common adjustments:
-- "Change the pose?"
-- "Adjust the colors?"
-- "More detail / simpler?"
-- "Try a different style?"
-
-If they say it's good, you're done.
+2. Present it naturally — describe what was generated
+3. If it clearly doesn't match the intent, proactively offer to regenerate with an adjusted prompt
+4. Otherwise, let the user respond naturally. Don't list a menu of options.
 
 ---
 
-## Sprite Sheet Workflow (Anchor-Frame Method)
+## Sprite Sheet Workflow
 
 When generating multiple frames (walk cycle, attack animation, etc.):
 
-1. **Generate the anchor frame first** — this sets the style, palette, proportions
-2. Show the anchor to the user for approval
-3. **Generate remaining frames in as few prompts as possible**, referencing the anchor's style explicitly in each prompt
+1. **Generate the anchor frame first** — this sets the style
+2. Show it to the user for approval (this one is worth confirming before committing to multiple frames)
+3. **Generate remaining frames in the same session** — Gemini remembers the style
 4. Combine into a sheet:
 
 ```bash
@@ -104,10 +153,12 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" sheet "<name>" \
   --frames '<json: [{"name":"idle","description":"..."},{"name":"walk1","description":"..."}]>'
 ```
 
-Tip: describe each frame relative to the anchor. E.g.:
-- Anchor: "16-bit warrior, front-facing idle, dark armor, red cape, pixel art, 32x32"
-- Frame 2: "same warrior as before, left foot forward, walking pose, same style and palette"
-- Frame 3: "same warrior, right foot forward, walking pose, same style and palette"
+The sheet command automatically uses the sheet name as the session.
+
+Describe each frame relative to the anchor:
+- Frame 1 (anchor): "16-bit warrior, front-facing idle, dark armor, red cape, pixel art, 32x32"
+- Frame 2: "same warrior, left foot forward, walking pose"
+- Frame 3: "same warrior, right foot forward, walking pose"
 
 ---
 
@@ -127,6 +178,12 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" delete "<name>" --output-dir
 ### Organize (remove orphaned manifest entries)
 ```bash
 python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" organize --output-dir "<from config>"
+```
+
+### Sessions
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" sessions --output-dir "<from config>"
+python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" end-session "<name>" --output-dir "<from config>"
 ```
 
 ---
@@ -160,11 +217,3 @@ If config exists, read `output_dir` from it and use it for all `--output-dir` ar
 
 - Script: `${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py`
 - Config: `${CLAUDE_PLUGIN_DATA}/config.json`
-
-## Options
-
-| Option | Values | Default |
-|--------|--------|---------|
-| `--size` | 16, 32, 64, 128 | 32 |
-| `--category` | character, item, tile, effect, ui | character |
-| `--name` | any string | auto from description |

@@ -2,6 +2,7 @@
 sprite_gen.py - 2D game sprite generator and manager using Gemini.
 Uses gemini_webapi (Google Gemini subscription-based cookie/OAuth authentication).
 Designed for portable use - all paths are passed as arguments.
+Supports multi-turn sessions for style-consistent sprite generation.
 """
 
 import asyncio
@@ -11,7 +12,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-SUPPORTED_SIZES = [16, 32, 64, 128]
 CATEGORIES = ["character", "item", "tile", "effect", "ui"]
 
 
@@ -70,12 +70,77 @@ def save_manifest(output_dir: Path, manifest: dict):
         json.dump(manifest, f, indent=2, ensure_ascii=False)
 
 
+# ---------------------------------------------------------------------------
+# Session helpers
+# ---------------------------------------------------------------------------
+
+def _sessions_dir(output_dir: Path) -> Path:
+    return output_dir / ".sessions"
+
+
+def load_session(output_dir: Path, session_name: str) -> dict | None:
+    """Load saved chat session metadata."""
+    path = _sessions_dir(output_dir) / f"{session_name}.json"
+    if path.exists():
+        with open(path) as f:
+            return json.load(f)
+    return None
+
+
+def save_session(output_dir: Path, session_name: str, metadata: list,
+                 description: str | None = None, sprite_entry: dict | None = None):
+    """Save chat session metadata and history for later resumption."""
+    sess_dir = _sessions_dir(output_dir)
+    sess_dir.mkdir(parents=True, exist_ok=True)
+    path = sess_dir / f"{session_name}.json"
+
+    existing = load_session(output_dir, session_name) or {
+        "metadata": [],
+        "created_at": datetime.now().isoformat(),
+        "history": [],
+    }
+
+    existing["metadata"] = metadata
+    existing["updated_at"] = datetime.now().isoformat()
+
+    if description or sprite_entry:
+        turn = {"timestamp": datetime.now().isoformat()}
+        if description:
+            turn["prompt"] = description
+        if sprite_entry:
+            turn["sprite"] = {
+                "name": sprite_entry.get("name"),
+                "filename": sprite_entry.get("filename"),
+                "path": sprite_entry.get("path"),
+                "category": sprite_entry.get("category"),
+                "size": sprite_entry.get("size"),
+            }
+        existing.setdefault("history", []).append(turn)
+
+    with open(path, "w") as f:
+        json.dump(existing, f, indent=2)
+
+
+def delete_session(output_dir: Path, session_name: str) -> bool:
+    path = _sessions_dir(output_dir) / f"{session_name}.json"
+    if path.exists():
+        path.unlink()
+        return True
+    return False
+
+
+def list_sessions(output_dir: Path) -> list[str]:
+    sess_dir = _sessions_dir(output_dir)
+    if not sess_dir.exists():
+        return []
+    return [p.stem for p in sess_dir.glob("*.json")]
+
 
 # ---------------------------------------------------------------------------
 # Gemini client
 # ---------------------------------------------------------------------------
 
-async def create_client(timeout: int = 60) -> GeminiClient:
+async def create_client(timeout: int = 300) -> GeminiClient:
     """Create a Gemini client via browser cookie auto-extraction."""
     try:
         client = GeminiClient()
@@ -99,13 +164,9 @@ async def cmd_check():
 
 
 async def cmd_generate(output_dir: Path, description: str, name: str | None,
-                       size: int, category: str, quiet: bool = False) -> dict | None:
-    """Generate a single sprite. Returns the result dict. Prints JSON unless quiet."""
-    if size not in SUPPORTED_SIZES:
-        result = {"success": False, "error": f"Unsupported size: {size}. Available: {SUPPORTED_SIZES}"}
-        if not quiet:
-            print(json.dumps(result))
-        return result
+                       size: int, category: str, session_name: str | None = None,
+                       quiet: bool = False) -> dict | None:
+    """Generate a single sprite. Uses chat session if session_name is provided."""
     if category not in CATEGORIES:
         result = {"success": False, "error": f"Unsupported category: {category}. Available: {CATEGORIES}"}
         if not quiet:
@@ -124,9 +185,24 @@ async def cmd_generate(output_dir: Path, description: str, name: str | None,
     client = await create_client()
 
     try:
-        response = await client.generate_content(description)
+        # Use multi-turn session if provided
+        if session_name:
+            saved = load_session(output_dir, session_name)
+            if saved:
+                chat = client.start_chat(metadata=saved["metadata"])
+            else:
+                chat = client.start_chat()
+            response = await chat.send_message(description)
+            # session metadata saved after sprite entry is created (below)
+            _chat_to_save = chat
+        else:
+            _chat_to_save = None
+            response = await client.generate_content(description)
 
         if not response.images:
+            if session_name and _chat_to_save:
+                save_session(output_dir, session_name, _chat_to_save.metadata,
+                             description=description)
             result = {
                 "success": False,
                 "error": "No image was generated. Try adjusting the prompt.",
@@ -139,12 +215,6 @@ async def cmd_generate(output_dir: Path, description: str, name: str | None,
         image = response.images[0]
         await image.save(path=str(category_dir), filename=filename)
 
-        if Image and output_path.exists():
-            img = Image.open(output_path)
-            if img.size != (size, size):
-                img = img.resize((size, size), Image.NEAREST)
-                img.save(output_path)
-
         entry = {
             "name": name,
             "filename": filename,
@@ -152,11 +222,16 @@ async def cmd_generate(output_dir: Path, description: str, name: str | None,
             "category": category,
             "size": size,
             "description": description,
+            "session": session_name,
             "created_at": datetime.now().isoformat(),
         }
         manifest = load_manifest(output_dir)
         manifest["sprites"].append(entry)
         save_manifest(output_dir, manifest)
+
+        if session_name and _chat_to_save:
+            save_session(output_dir, session_name, _chat_to_save.metadata,
+                         description=description, sprite_entry=entry)
 
         result = {"success": True, "entry": entry}
         if not quiet:
@@ -168,11 +243,15 @@ async def cmd_generate(output_dir: Path, description: str, name: str | None,
 
 
 async def cmd_sheet(output_dir: Path, sheet_name: str, frames_json: str,
-                    size: int, category: str):
-    """Generate multiple sprites and combine into a spritesheet."""
+                    size: int, category: str, session_name: str | None = None):
+    """Generate multiple sprites and combine into a spritesheet.
+    Uses a shared session across all frames for style consistency."""
     if not Image:
         print(json.dumps({"success": False, "error": "Pillow is required."}))
         return
+
+    # Use sheet name as session if no explicit session given
+    effective_session = session_name or sheet_name
 
     frames = json.loads(frames_json)
     results = []
@@ -182,6 +261,7 @@ async def cmd_sheet(output_dir: Path, sheet_name: str, frames_json: str,
             description=frame["description"],
             name=frame.get("name"),
             size=size, category=category,
+            session_name=effective_session,
             quiet=True,
         )
         if result and result.get("success"):
@@ -210,6 +290,7 @@ async def cmd_sheet(output_dir: Path, sheet_name: str, frames_json: str,
         "success": True,
         "sheet_path": str(sheet_path),
         "sprite_count": cols,
+        "session": effective_session,
     }, indent=2))
 
 
@@ -251,6 +332,29 @@ def cmd_organize(output_dir: Path):
     print(json.dumps({"total": len(cleaned), "removed_orphans": original_count - len(cleaned)}))
 
 
+def cmd_sessions(output_dir: Path):
+    """List all active sessions with their history."""
+    session_names = list_sessions(output_dir)
+    sessions = []
+    for name in session_names:
+        data = load_session(output_dir, name)
+        if data:
+            sessions.append({
+                "name": name,
+                "created_at": data.get("created_at"),
+                "updated_at": data.get("updated_at"),
+                "turns": len(data.get("history", [])),
+                "history": data.get("history", []),
+            })
+    print(json.dumps({"sessions": sessions}, indent=2))
+
+
+def cmd_end_session(output_dir: Path, session_name: str):
+    """End (delete) a session."""
+    deleted = delete_session(output_dir, session_name)
+    print(json.dumps({"success": deleted, "session": session_name}))
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -273,11 +377,13 @@ async def main():
     if len(sys.argv) < 2:
         print("Usage:")
         print("  sprite_gen.py check")
-        print("  sprite_gen.py generate <desc> --output-dir DIR [--name N] [--size 32] [--category character]")
-        print("  sprite_gen.py sheet <name> --output-dir DIR --frames '<json>' [--size 32] [--category character]")
+        print("  sprite_gen.py generate <desc> --output-dir DIR [--name N] [--size 32] [--category character] [--session NAME]")
+        print("  sprite_gen.py sheet <name> --output-dir DIR --frames '<json>' [--size 32] [--category character] [--session NAME]")
         print("  sprite_gen.py list --output-dir DIR [--category CAT]")
         print("  sprite_gen.py delete <name> --output-dir DIR")
         print("  sprite_gen.py organize --output-dir DIR")
+        print("  sprite_gen.py sessions --output-dir DIR")
+        print("  sprite_gen.py end-session <name> --output-dir DIR")
         return
 
     command = sys.argv[1]
@@ -299,6 +405,7 @@ async def main():
             name=opts.get("name"),
             size=int(opts.get("size", 32)),
             category=opts.get("category", "character"),
+            session_name=opts.get("session"),
         )
 
     elif command == "sheet":
@@ -311,6 +418,7 @@ async def main():
             frames_json=opts.get("frames", "[]"),
             size=int(opts.get("size", 32)),
             category=opts.get("category", "character"),
+            session_name=opts.get("session"),
         )
 
     elif command == "list":
@@ -324,6 +432,15 @@ async def main():
 
     elif command == "organize":
         cmd_organize(output_dir)
+
+    elif command == "sessions":
+        cmd_sessions(output_dir)
+
+    elif command == "end-session":
+        if len(sys.argv) < 3 or sys.argv[2].startswith("--"):
+            print("Error: Please provide a session name.")
+            return
+        cmd_end_session(output_dir, sys.argv[2])
 
     else:
         print(f"Unknown command: {command}")
