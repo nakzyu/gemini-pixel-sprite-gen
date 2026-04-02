@@ -27,6 +27,10 @@ def _ensure_dependencies():
         from PIL import Image  # noqa: F401
     except ImportError:
         missing.append("Pillow")
+    try:
+        import numpy  # noqa: F401
+    except ImportError:
+        missing.append("numpy")
 
     if missing:
         print(f"Auto-installing missing packages: {', '.join(missing)}")
@@ -55,17 +59,53 @@ except ImportError:
 
 
 def _remove_watermark(image_path: Path):
-    """Remove the Gemini sparkle watermark from the bottom-right corner.
-    Mirrors pixels from just above/left of the watermark area for seamless fill."""
+    """Remove the Gemini sparkle watermark using reverse alpha blending.
+    Uses pre-extracted alpha maps from the official watermark."""
     if not Image:
         return
+    try:
+        import base64
+        import struct
+        import numpy as np
+    except ImportError:
+        return
+
+    alpha_file = Path(__file__).parent / "watermark_alpha.json"
+    if not alpha_file.exists():
+        return
+
     img = Image.open(image_path).convert("RGBA")
     w, h = img.size
-    # Watermark is ~7.5% of image size in the bottom-right corner
-    margin = max(int(w * 0.075), 80)
-    # Copy the strip just above the watermark area and paste it over
-    src_region = img.crop((w - margin, h - 2 * margin, w, h - margin))
-    img.paste(src_region, (w - margin, h - margin))
+
+    # Select watermark size based on image dimensions
+    if w > 1024 and h > 1024:
+        logo_size, margin = 96, 64
+    else:
+        logo_size, margin = 48, 32
+
+    with open(alpha_file) as f:
+        alpha_b64 = json.load(f).get(str(logo_size))
+    if not alpha_b64:
+        return
+
+    data = base64.b64decode(alpha_b64)
+    n = len(data) // 4
+    alpha_map = np.array(struct.unpack(f"<{n}f", data), dtype=np.float32).reshape(logo_size, logo_size)
+
+    # Watermark position: bottom-right corner with margin
+    x = w - margin - logo_size
+    y = h - margin - logo_size
+    region = np.array(img.crop((x, y, x + logo_size, y + logo_size)), dtype=np.float32)
+
+    # Reverse alpha blending: original = (watermarked - α * 255) / (1 - α)
+    mask = alpha_map > 0.001
+    for c in range(3):
+        region[:, :, c][mask] = (
+            (region[:, :, c][mask] - alpha_map[mask] * 255.0) / (1.0 - alpha_map[mask])
+        )
+    region = np.clip(region, 0, 255).astype(np.uint8)
+
+    img.paste(Image.fromarray(region), (x, y))
     img.save(image_path)
 
 
