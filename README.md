@@ -12,15 +12,15 @@ Uses Gemini's image generation via browser cookie authentication ([`gemini_webap
 ## Installation
 
 ```bash
-/plugin marketplace add nakzyu/sprite-gen
+/plugin marketplace add nakzyu/gemini-sprite-gen
 /plugin install gemini-sprite-gen@gemini-sprite-gen
 ```
 
 Or for local development:
 
 ```bash
-git clone https://github.com/nakzyu/sprite-gen.git
-claude --plugin-dir ./sprite-gen
+git clone https://github.com/nakzyu/gemini-sprite-gen.git
+claude --plugin-dir ./gemini-sprite-gen
 ```
 
 Dependencies are auto-installed on first run via `requirements.txt`.
