@@ -1,6 +1,6 @@
 {
   "$schema": "https://code.claude.com/schemas/marketplace.json",
-  "name": "sprite-gen",
+  "name": "gemini-sprite-gen",
   "owner": {
     "name": "nakzyu"
   },
@@ -9,7 +9,7 @@
   },
   "plugins": [
     {
-      "name": "sprite-gen",
+      "name": "gemini-sprite-gen",
       "source": "./",
       "description": "Generate and manage 2D game sprites using Google Gemini"
     }

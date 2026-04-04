@@ -1,5 +1,5 @@
 ---
-name: sprite-gen
+name: gemini-sprite-gen
 description: Generate and manage 2D game sprites using Google Gemini. Use when creating pixel art, game characters, items, tiles, effects, sprite sheets, or game visual assets. Handles generation, listing, deletion, and organization of sprite files.
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep
@@ -34,8 +34,8 @@ Infer from the subject:
 - e.g. "cute green slime" → `green_slime`, "fire mage with staff" → `fire_mage`
 
 ### Background
-- Default → "transparent background"
-- If the user specifies, use what they say
+- Transparent background is automatic — the script appends chromakey green instructions and removes the green in post-processing. Do NOT mention "transparent background" in your prompt.
+- If the user explicitly wants a specific background color/scene, they'll say so.
 
 ### Session
 - **New subject** (first time generating this character/thing) → start a new session, name it after the subject

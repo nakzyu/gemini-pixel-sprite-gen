@@ -50,6 +50,77 @@ except ImportError:
     Image = None
 
 
+GREENSCREEN_PROMPT_SUFFIX = """
+
+CRITICAL BACKGROUND REQUIREMENT:
+- Background MUST be solid, flat, uniform chromakey green (#00FF00, RGB 0,255,0).
+- NO gradients, NO shadows, NO lighting effects on the background.
+- The subject must have a thin white outline separating it from the green.
+- The subject itself must NOT contain any green colors.
+"""
+
+
+def _remove_green_screen(image_path: Path):
+    """Remove chromakey green background and replace with real transparency."""
+    if not Image:
+        return
+    try:
+        import numpy as np
+    except ImportError:
+        return
+
+    img = Image.open(image_path).convert("RGBA")
+    data = np.array(img, dtype=np.float32)
+    rgb = data[:, :, :3]
+
+    # Convert RGB to HSV for robust green detection
+    r, g, b = rgb[:, :, 0] / 255, rgb[:, :, 1] / 255, rgb[:, :, 2] / 255
+    max_c = np.maximum(np.maximum(r, g), b)
+    min_c = np.minimum(np.minimum(r, g), b)
+    delta = max_c - min_c
+
+    # Hue
+    hue = np.zeros_like(max_c)
+    mask_g = (max_c == g) & (delta != 0)
+    mask_b = (max_c == b) & (delta != 0)
+    mask_r = (max_c == r) & (delta != 0)
+    hue[mask_r] = (60 * ((g[mask_r] - b[mask_r]) / delta[mask_r]) + 360) % 360
+    hue[mask_g] = (60 * ((b[mask_g] - r[mask_g]) / delta[mask_g]) + 120) % 360
+    hue[mask_b] = (60 * ((r[mask_b] - g[mask_b]) / delta[mask_b]) + 240) % 360
+
+    # Saturation and Value (0-100 scale)
+    sat = np.zeros_like(max_c)
+    sat[max_c != 0] = (delta[max_c != 0] / max_c[max_c != 0]) * 100
+    val = max_c * 100
+
+    # Detect green: hue near 120°, high saturation, high value
+    hue_diff = np.abs(hue - 120)
+    hue_diff = np.minimum(hue_diff, 360 - hue_diff)
+    green_mask = (hue_diff < 30) & (sat > 40) & (val > 40)
+
+    # Dilate mask slightly to catch anti-aliased edge pixels
+    from scipy import ndimage
+    green_mask = ndimage.binary_dilation(green_mask, iterations=1)
+
+    # Apply transparency and zero out RGB for transparent pixels
+    alpha = data[:, :, 3].copy()
+    alpha[green_mask] = 0
+    data[:, :, 3] = alpha
+    data[green_mask, 0] = 0
+    data[green_mask, 1] = 0
+    data[green_mask, 2] = 0
+
+    # Despill: remove green tint from edge pixels (semi-transparent neighbors)
+    edge_mask = ndimage.binary_dilation(green_mask, iterations=2) & ~green_mask
+    for y, x in zip(*np.where(edge_mask)):
+        r_val, g_val, b_val = data[y, x, 0], data[y, x, 1], data[y, x, 2]
+        if g_val > max(r_val, b_val):
+            data[y, x, 1] = max(r_val, b_val)
+
+    result = Image.fromarray(np.clip(data, 0, 255).astype(np.uint8))
+    result.save(image_path)
+
+
 def _remove_watermark(image_path: Path):
     """Remove the Gemini sparkle watermark using reverse alpha blending.
     Uses pre-extracted alpha maps from the official watermark."""
@@ -342,6 +413,9 @@ async def cmd_generate(output_dir: Path, description: str, name: str | None,
                        quiet: bool = False) -> dict | None:
     """Generate a single sprite. Uses chat session if session_name is provided.
     files: optional list of file paths to attach (images, etc.)."""
+    # Auto-append green screen instructions for transparent background
+    description = description + GREENSCREEN_PROMPT_SUFFIX
+
     if category not in CATEGORIES:
         result = {"success": False, "error": f"Unsupported category: {category}. Available: {CATEGORIES}"}
         if not quiet:
@@ -406,6 +480,7 @@ async def cmd_generate(output_dir: Path, description: str, name: str | None,
             return result
 
         _remove_watermark(output_path)
+        _remove_green_screen(output_path)
 
         entry = {
             "name": name,
