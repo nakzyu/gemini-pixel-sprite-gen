@@ -1,17 +1,17 @@
 {
   "$schema": "https://code.claude.com/schemas/marketplace.json",
-  "name": "gemini-sprite-gen",
+  "name": "gemini-pixel-sprite-gen",
   "owner": {
     "name": "nakzyu"
   },
   "metadata": {
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {
-      "name": "gemini-sprite-gen",
+      "name": "gemini-pixel-sprite-gen",
       "source": "./",
-      "description": "Generate and manage 2D game sprites using Google Gemini"
+      "description": "Chunky low-res pixel-art game sprite pipeline (Gemini + snap)"
     }
   ]
 }

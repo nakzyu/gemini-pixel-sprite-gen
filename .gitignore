@@ -13,6 +13,12 @@ env/
 # Generated sprites (user data)
 sprites/
 
+# Per-project pipeline config (user creates via first-run setup)
+sprite_spec.yaml
+
+# Demo asset (regenerable, not part of skill)
+demo.gif
+
 # Local Claude Code config (per-machine)
 .claude/
 .claude-plugin/config.json

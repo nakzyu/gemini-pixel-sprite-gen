@@ -1,12 +1,12 @@
 ---
-name: gemini-sprite-gen
-description: Generate and manage 2D game sprites using Google Gemini. Use when creating pixel art, game characters, items, tiles, effects, sprite sheets, or game visual assets. Handles generation, listing, deletion, and organization of sprite files.
+name: gemini-pixel-sprite-gen
+description: Generate chunky low-res pixel-art game sprites with consistent style across a roster (characters/monsters/bosses). Uses Google Gemini for generation + a deterministic snap pipeline. Use for game characters, monsters, sprite sheets, animation frames, pixel-art assets.
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 argument-hint: "[what to generate, or: list / delete / organize]"
 ---
 
-# Sprite Generator
+# Pixel Sprite Generator
 
 You generate and manage 2D game sprites via Google Gemini (browser cookie auth, `gemini_webapi`).
 The Python script at `${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py` is a dumb pipe — it sends your prompt to Gemini and saves the result. **You are the creative brain.**
@@ -117,6 +117,32 @@ For follow-ups in an existing session, reference the previous generation natural
 - "same warrior but in a walking pose, left foot forward"
 - "adjust the colors to be darker, keep everything else the same"
 
+### Phase 3.5: Anchor check (HARD GATE)
+
+**Before sending to Gemini for any brand-new subject (a character/item/asset
+you have not generated before in this project), an anchor reference image is
+REQUIRED.** If you do not have one, STOP and ask the user. Do NOT proceed.
+
+What counts as "an anchor":
+- A project-level canonical style reference the user has previously committed
+  (saved in memory / repo `references/` dir / earlier in this conversation).
+- An image the user pasted into this turn or named explicitly.
+- For a *new action of an existing character*, the approved IDLE of that
+  character (already in this project) — no asking needed.
+
+What does NOT count:
+- "Make it like Octopath Traveler" with no image.
+- A vague style description.
+- Re-using a different character's idle.
+
+If no anchor is found, ask the user something concrete like:
+"I need a style anchor image for this new character/asset. Should I use the
+project canonical reference, or do you have a specific image to provide?"
+
+This rule exists because generating without a style anchor produces drifty,
+inconsistent output that fails to match the rest of the roster. User has
+repeatedly enforced this — do not skip even if "you think you know the style."
+
 ### Phase 4: Generate
 
 ```bash
@@ -138,6 +164,32 @@ Use `--files` when the user provides a reference image (e.g. "make this into pix
 4. Otherwise, let the user respond naturally. Don't list a menu of options.
 
 ---
+
+## Pixel Art Pipeline (chunky low-res game style)
+
+When the user asks for **game-ready** pixel-art characters with multiple
+actions (idle/attack/walk/hit/death/etc.) that drop straight into Godot,
+follow `${CLAUDE_SKILL_DIR}/PIXEL_ART_PIPELINE.md`. It's the locked-in recipe:
+
+1. Pass canonical style reference (or approved character idle) as `--files`
+2. Prompt = deltas only, with chunky-pixel + 3/4-eye boilerplate
+3. Snap with `${CLAUDE_SKILL_DIR}/scripts/snap_single.py` (default `--target-h 32`,
+   lower for bent poses) — outline-preserving mode-downsample
+4. After every new action, run `${CLAUDE_SKILL_DIR}/scripts/normalize_sheets.py`
+   to per-character pad cells to a common size
+5. Game file is `<char>_<action>.png` (sole artifact — no `_1x1`, no `_display`). Open via `open <path>` to preview.
+
+**Trigger this pipeline when:** user wants Godot/Unity pixel-art characters,
+multiple poses of one character, low-res / RPG-classic / chunky / Octopath /
+Dead-Cells style, sprite-sheet animations.
+
+**Skip this pipeline when:** user wants a single static illustration, a
+non-character asset (item/tile/UI), high-res pixel art, or not for a game
+engine. Plain `generate` is fine.
+
+Read `${CLAUDE_SKILL_DIR}/PIXEL_ART_PIPELINE.md` before starting; it covers
+references, prompt template, h-tuning compare grid, normalize, Godot import,
+and known failure modes.
 
 ## Sprite Sheet Workflow
 
@@ -200,16 +252,38 @@ cat "${CLAUDE_PLUGIN_DATA}/config.json" 2>/dev/null
 If it doesn't exist or fails, run setup:
 
 1. `pip install -r "${CLAUDE_SKILL_DIR}/scripts/requirements.txt"`
-2. Ask user: "스프라이트를 어디에 저장할까요?" (default: `./sprites`)
-3. Save config:
+2. Ask user: "Where should sprites be saved? (default: `./sprites`)"
+3. **Pixel-art project setup (only if user mentioned a game / chunky pixel art / sprite roster)** — if the workflow will use the chunky pixel-art pipeline, also collect:
+   a. **Canonical style anchor reference image**: ask "Do you have a reference image to anchor the art style for this project? Provide a path, or I can help you generate one. (This is mandatory — without it, generation drifts and `generate` will refuse to run for new characters/monsters.)" Save the path.
+   b. **Project sprite spec**: check if `<project_root>/sprite_spec.yaml` exists. If not, ask "What sprite spec should I use? (defaults: characters target_h=32 cell_h=48, monsters target_h=64 cell_h=72)" and create the file with their values, or use defaults. If it exists, read it and use those values.
+4. Save config:
 ```bash
 mkdir -p "${CLAUDE_PLUGIN_DATA}"
 cat > "${CLAUDE_PLUGIN_DATA}/config.json" << 'EOF'
 {
-  "output_dir": "<user's answer>"
+  "output_dir": "<user's answer>",
+  "canonical_anchor": "<path to anchor image, optional>",
+  "project_root": "<cwd at setup time, optional>"
 }
 EOF
 ```
-4. `python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" check`
+5. `python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" check`
 
-If config exists, read `output_dir` from it and pass as `--output-dir` to all commands.
+If config exists, read `output_dir` (and `canonical_anchor`, `project_root` if present) from it and pass as args to all commands.
+
+## Pipeline Config (sprite_spec.yaml)
+
+**ALWAYS read `<project_root>/sprite_spec.yaml` BEFORE running snap or generate
+for the chunky-pixel-art pipeline.** It defines per-project specs:
+- `native.characters.target_h` / `cell_h` — chars
+- `native.monsters.target_h` / `cell_h` — monsters
+- `native.margin_bottom` — PAD
+
+If `sprite_spec.yaml` is missing in the project root, fall back to defaults
+documented in `PIXEL_ART_PIPELINE.md` (chars 32/48, monsters 64/72) AND offer
+to create the file. Never proceed silently with defaults if the project has
+git history or other sprite output that suggests a non-default spec.
+
+Also verify the canonical anchor path (from `config.json` or
+`sprite_spec.yaml`) exists before every `generate` call. If missing → STOP
+and ask the user.
