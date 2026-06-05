@@ -16,6 +16,10 @@ sprites/
 # Per-project pipeline config (user creates via first-run setup)
 sprite_spec.yaml
 
+# Per-project roster (locked per-character designs). Stays on disk across
+# sessions for persistence, but is project-specific so not part of the generic skill.
+roster/
+
 # Demo asset (regenerable, not part of skill)
 demo.gif
 

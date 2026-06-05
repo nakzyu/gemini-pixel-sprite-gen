@@ -171,13 +171,20 @@ When the user asks for **game-ready** pixel-art characters with multiple
 actions (idle/attack/walk/hit/death/etc.) for any 2D engine, follow
 `${CLAUDE_SKILL_DIR}/PIXEL_ART_PIPELINE.md`. It's the locked-in recipe:
 
-1. Pass canonical style reference (or approved character idle) as `--files`
-2. Prompt = deltas only, with chunky-pixel + 3/4-eye boilerplate
-3. Snap with `${CLAUDE_SKILL_DIR}/scripts/snap_single.py` (default `--target-h 32`,
+1. **Existing unit?** Read `<project_root>/roster/<unit>.yaml` — pass its
+   `anchor_idle` as `--files` and inject `design`+`distinctive` into the prompt.
+   **New unit?** Pass the canonical style reference as `--files`.
+2. Prompt = deltas only (style + locked design come from the references/roster);
+   keep it short — long prose fights the reference image
+3. **Gate** the raw output: `${CLAUDE_SKILL_DIR}/scripts/qc_frame.py <raw> --kind idle|action|swing`.
+   Hard fail (clip / no transparency) → regenerate before snapping; never show a clipped frame
+4. Snap with `${CLAUDE_SKILL_DIR}/scripts/snap_single.py` (default `--target-h 32`,
    lower for bent poses) — outline-preserving mode-downsample
-4. After every new action, run `${CLAUDE_SKILL_DIR}/scripts/normalize_sheets.py`
-   to per-character pad cells to a common size
-5. Game file is `<char>_<action>.png` (sole artifact — no `_1x1`, no `_display`). Open via `open <path>` to preview.
+5. Tool artifact is `<char>_<action>.png` in `sprites/sheets/` (no `_1x1`, no
+   `_display`). Open via `open <path>` to preview; on approval, **deliver** it to
+   the project's configured `delivery_root` (only if `sprite_spec.yaml` defines one)
+6. `normalize_sheets.py` is OPTIONAL — run only when the user explicitly wants
+   uniform cells; do NOT auto-run (it breaks idle uniformity across the roster)
 
 **Trigger this pipeline when:** user wants pixel-art characters for a 2D
 game (any engine — Godot, Unity, Pico-8, raylib, web, etc.), multiple poses

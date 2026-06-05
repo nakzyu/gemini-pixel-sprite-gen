@@ -28,7 +28,7 @@ from scipy import ndimage
 cell_h, PAD, UPSCALE = 48, 4, 8
 
 
-def depixelize(src_arr, target_h):
+def depixelize(src_arr, target_h, keep_all=False):
     A = src_arr[..., 3]
     ys, xs = np.where(A > 10)
     tight = src_arr[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
@@ -54,8 +54,17 @@ def depixelize(src_arr, target_h):
     labels, n = ndimage.label(mask)
     if n > 1:
         sizes = ndimage.sum(mask, labels, range(1, n + 1))
-        keep = 1 + int(np.argmax(sizes))
-        out[~(labels == keep)] = 0
+        if keep_all:
+            # Keep every component except tiny specks (downsample noise).
+            # Lets floating props (spellbook / orbs / summons) survive.
+            biggest = sizes.max()
+            drop = {i + 1 for i, s in enumerate(sizes)
+                    if s < max(3, biggest * 0.02)}
+            for lab in drop:
+                out[labels == lab] = 0
+        else:
+            keep = 1 + int(np.argmax(sizes))
+            out[~(labels == keep)] = 0
         mask = out[..., 3] > 0
     pad = np.pad(mask, 1, constant_values=False)
     edge = mask & (
@@ -91,9 +100,20 @@ def main():
                     help="Trim N rows off the TOP of the source tight-bbox "
                          "before snapping. Use to drop overlong hair/halo so "
                          "the face gets more dest pixels (eyes survive at h32)")
+    ap.add_argument("--left-crop", type=int, default=0,
+                    help="Trim N cols off the LEFT of the tight-bbox; NEGATIVE = "
+                         "ADD N transparent cols (pad left) to shift the horizontal "
+                         "downsample phase WITHOUT cropping or stretching the figure")
+    ap.add_argument("--right-crop", type=int, default=0,
+                    help="Trim N cols off the RIGHT; NEGATIVE = pad right.")
     ap.add_argument("--cell-h", type=int, default=48,
                     help="Cell height (default 48 for characters; use higher "
                          "like 64 for tall monsters / large creatures)")
+    ap.add_argument("--keep-all", action="store_true",
+                    help="Keep ALL connected components (drop only tiny noise) "
+                         "instead of only the largest. Use for sprites with "
+                         "DETACHED props — a floating spellbook, orbs, runes, a "
+                         "summoned creature — that would otherwise be culled.")
     a = ap.parse_args()
 
     out_dir = Path(a.out_dir)
@@ -101,13 +121,13 @@ def main():
     cell_h = a.cell_h
 
     src_arr = np.array(Image.open(a.src).convert("RGBA"))
-    if a.top_crop:
+    if a.top_crop or a.left_crop or a.right_crop:
         A = src_arr[..., 3]
         ys, xs = np.where(A > 10)
         y0, y1 = ys.min(), ys.max() + 1
         x0, x1 = xs.min(), xs.max() + 1
-        src_arr = src_arr[y0 + a.top_crop:y1, x0:x1]
-    native = depixelize(src_arr, a.target_h)
+        src_arr = src_arr[y0 + a.top_crop:y1, x0 + a.left_crop:x1 - a.right_crop]
+    native = depixelize(src_arr, a.target_h, keep_all=a.keep_all)
     A = native[..., 3]
     ys, xs = np.where(A > 0)
     native = native[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
