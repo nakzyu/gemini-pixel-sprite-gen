@@ -24,10 +24,16 @@ You must infer the following from the user's request. Never ask the user to spec
 ### Category
 Infer from the subject:
 - **character**: people, monsters, creatures, NPCs, enemies, bosses
-- **item**: weapons, potions, keys, coins, armor, accessories
+- **item**: weapons, potions, keys, coins, armor, accessories (equipment ICONS)
 - **tile**: ground, walls, water, grass, floor, terrain
 - **effect**: explosions, sparkles, fire, smoke, magic, particles
-- **ui**: buttons, health bars, menus, icons, cursors, frames
+- **ui**: buttons, health bars, menus, ICONS (skill/element/status), cursors, frames
+- **background**: full battle/scene backdrops, dungeon vistas, menu backgrounds
+
+This skill does THREE asset families, each with its own post-process (see the
+"Asset Types" section): **sprites** (characters/monsters), **icons**
+(skill/element/status/item, square + transparent), and **backgrounds** (opaque,
+fill the viewport). Pick the category, then follow that family's pipeline.
 
 ### Name
 - Generate a short, descriptive snake_case name from the subject
@@ -191,13 +197,89 @@ game (any engine — Godot, Unity, Pico-8, raylib, web, etc.), multiple poses
 of one character, low-res / RPG-classic / chunky / Octopath / Dead-Cells
 style, sprite-sheet animations.
 
-**Skip this pipeline when:** user wants a single static illustration, a
-non-character asset (item/tile/UI), high-res pixel art, or not for a game
-engine. Plain `generate` is fine.
+**Skip this (character) pipeline when:** the asset is an ICON or a BACKGROUND
+(use the dedicated flows below), a single static illustration, high-res pixel
+art, or not for a game engine. Plain `generate` is fine.
 
-Read `${CLAUDE_SKILL_DIR}/PIXEL_ART_PIPELINE.md` before starting; it covers
-references, prompt template, h-tuning compare grid, normalize, engine import,
-and known failure modes.
+Read `${CLAUDE_SKILL_DIR}/PIXEL_ART_PIPELINE.md` before starting the character
+pipeline; it covers references, prompt template, h-tuning compare grid,
+normalize, engine import, and known failure modes.
+
+---
+
+## Asset Types
+
+This skill makes three families. Same generator, different prompt framing +
+post-process. **Stay in the SAME chunky pixel-art family across all three** —
+that consistency is the whole point of using one skill. For sprites, pass the
+project style anchor. For icons/backgrounds there is no character anchor, but
+keep the chunky low-res, limited-palette, bold-outline language so they read as
+the same game.
+
+### A) Sprites (characters / monsters) — the default
+
+Follow the Pixel Art Pipeline above (anchor required, `snap_single.py`,
+bottom-center). Nothing changes.
+
+### B) Icons (skill / element / status / item) — square, transparent
+
+Small square pictograms. Transparent subject (do NOT use `--opaque`), so the
+generator chromakeys the green out as usual.
+
+1. **Prompt:** one bold, centered, iconic object on a flat green bg. Push
+   "SINGLE centered icon, chunky pixel art, thick black outline, bold readable
+   silhouette, limited palette, NO text, NO border frame". Element/status icons
+   should be instantly legible at tiny size (fire = flame, freeze = ice crystal,
+   poison = skull/bubble, bleed = blood drop). Keep it ONE concept — icons read
+   by silhouette.
+2. **Generate** (transparent, no `--opaque`):
+   ```bash
+   python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" generate "<icon prompt>" \
+     --output-dir "<from config>" --name <icon_name> --category ui \
+     --session icons   # reuse ONE session so a whole icon set stays consistent
+   ```
+   Use `--category item` for equipment icons. **Generate an icon SET in one
+   session** ("same style, now a lightning bolt", "now an ice crystal") so the
+   whole set matches — like a sprite sheet, the first icon is the style anchor.
+3. **Snap to a square:**
+   ```bash
+   python3 "${CLAUDE_SKILL_DIR}/scripts/snap_icon.py" <raw.png> <icon_name> \
+     --out-dir sprites/icons --size 32   # 48/64 for larger item icons
+   ```
+   Centers the art in a `size`×`size` transparent cell, fits the longer side,
+   keeps all parts (use `--largest` for a clean single blob). Same
+   mode-downsample as sprites → same pixel family.
+4. Preview with `open`, then deliver to the project's icon dir
+   (`<delivery_root>/icons/<group>/<name>.png`; common groups: `element`,
+   `status`, `skill`, `item`). No eye-edit, no QC gate (icons aren't faces).
+
+### C) Backgrounds — opaque, fills the viewport
+
+Full scenes (battle backdrops, dungeon vistas, menu backgrounds). Keep the
+generated background — pass `--opaque` so NO chromakey/transparency is applied.
+
+1. **Prompt:** describe the SCENE + mood + palette, framed for the game's aspect
+   (this project is PORTRAIT 360×640). Push "chunky pixel-art background, wide
+   establishing scene, atmospheric, cohesive limited palette, NO characters, NO
+   UI, NO text". Theme it off the dungeon (forest / goblin camp / mine / swamp /
+   abyss …) from `server/src/dungeons/dungeon-data.ts`.
+2. **Generate with `--opaque`:**
+   ```bash
+   python3 "${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py" generate "<scene prompt>" \
+     --output-dir "<from config>" --name <bg_name> --category background \
+     --session backgrounds --opaque
+   ```
+3. **Snap to the viewport (cover-crop + chunk):**
+   ```bash
+   python3 "${CLAUDE_SKILL_DIR}/scripts/snap_bg.py" <raw.png> <bg_name> \
+     --out-dir sprites/backgrounds --size 360x640 --block 2
+   ```
+   Cover-fits + center-crops to 360×640, then chunks pixels to `block`×`block`
+   so it matches the chunky sprites (`--block 1` for smooth, 3-4 for coarser).
+4. Preview with `open`, then deliver to `<delivery_root>/backgrounds/<name>.png`.
+
+All three families' native sizes + delivery paths live in
+`<project_root>/sprite_spec.yaml` — read it first; it's the source of truth.
 
 ## Sprite Sheet Workflow
 

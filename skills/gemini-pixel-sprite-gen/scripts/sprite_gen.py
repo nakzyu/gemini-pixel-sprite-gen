@@ -13,7 +13,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-CATEGORIES = ["character", "item", "tile", "effect", "ui"]
+CATEGORIES = ["character", "item", "tile", "effect", "ui", "background"]
 
 
 def _ensure_dependencies():
@@ -435,11 +435,15 @@ async def cmd_check():
 async def cmd_generate(output_dir: Path, description: str, name: str | None,
                        category: str, session_name: str | None = None,
                        files: list[str] | None = None,
-                       quiet: bool = False) -> dict | None:
+                       quiet: bool = False, opaque: bool = False) -> dict | None:
     """Generate a single sprite. Uses chat session if session_name is provided.
-    files: optional list of file paths to attach (images, etc.)."""
-    # Auto-append green screen instructions for transparent background
-    description = description + GREENSCREEN_PROMPT_SUFFIX
+    files: optional list of file paths to attach (images, etc.).
+    opaque: if True, KEEP the generated background (no chromakey green, no
+    transparency removal). Use for backgrounds / full scenes / opaque panels.
+    Default False = transparent-subject mode (sprites, icons)."""
+    if not opaque:
+        # Auto-append green screen instructions for transparent background
+        description = description + GREENSCREEN_PROMPT_SUFFIX
 
     if category not in CATEGORIES:
         result = {"success": False, "error": f"Unsupported category: {category}. Available: {CATEGORIES}"}
@@ -520,7 +524,8 @@ async def cmd_generate(output_dir: Path, description: str, name: str | None,
             return result
 
         _remove_watermark(output_path)
-        _remove_green_screen(output_path)
+        if not opaque:
+            _remove_green_screen(output_path)
 
         entry = {
             "name": name,
@@ -708,14 +713,23 @@ def cmd_end_session(output_dir: Path, session_name: str):
 # ---------------------------------------------------------------------------
 
 def parse_args(args: list[str]) -> dict:
-    """Parse --key value pairs from args list."""
+    """Parse --key value pairs from args list.
+
+    A --flag with no following value (end of args, or immediately followed by
+    another --flag) is treated as a boolean set to True. Backward compatible:
+    all value-taking flags pass values that don't start with '--'.
+    """
     result = {}
     i = 0
     while i < len(args):
-        if args[i].startswith("--") and i + 1 < len(args):
+        if args[i].startswith("--"):
             key = args[i][2:].replace("-", "_")
-            result[key] = args[i + 1]
-            i += 2
+            if i + 1 < len(args) and not args[i + 1].startswith("--"):
+                result[key] = args[i + 1]
+                i += 2
+            else:
+                result[key] = True
+                i += 1
         else:
             i += 1
     return result
@@ -725,7 +739,8 @@ async def main():
     if len(sys.argv) < 2:
         print("Usage:")
         print("  sprite_gen.py check")
-        print("  sprite_gen.py generate <desc> [--output-dir DIR] [--name N] [--category character] [--session NAME] [--files path1,path2]")
+        print("  sprite_gen.py generate <desc> [--output-dir DIR] [--name N] [--category character] [--session NAME] [--files path1,path2] [--opaque]")
+        print("     (--opaque: keep the generated background — use for backgrounds/scenes/opaque panels)")
         print("  sprite_gen.py sheet <name> [--output-dir DIR] --frames '<json>' [--category character] [--session NAME]")
         print("  sprite_gen.py list [--output-dir DIR] [--category CAT]")
         print("  sprite_gen.py delete <name> [--output-dir DIR]")
@@ -757,6 +772,7 @@ async def main():
             category=opts.get("category", "character"),
             session_name=opts.get("session"),
             files=files,
+            opaque=bool(opts.get("opaque", False)),
         )
 
     elif command == "sheet":
