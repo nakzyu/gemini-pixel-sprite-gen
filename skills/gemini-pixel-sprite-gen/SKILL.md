@@ -13,9 +13,16 @@ The Python script at `${CLAUDE_SKILL_DIR}/scripts/sprite_gen.py` is a dumb pipe 
 
 All parameters (`--name`, `--category`, `--session`) are decided by you based on context. The user never needs to specify these directly.
 
-## User Request: $ARGUMENTS
+## Prerequisites & Installation
+
+- **Python**: 3.10+
+- **Dependencies**: `pip install -r requirements.txt` (requires `gemini_webapi>=2.1.1`, `Pillow`, `numpy`, `scipy`, `curl_cffi`, `browser_cookie3`)
+- **Authentication**: Logged into [gemini.google.com](https://gemini.google.com) in Google Chrome or Firefox on the local machine.
+- **Multi-Account**: Set `GEMINI_ACCOUNT=<email>` (e.g. `GEMINI_ACCOUNT=nakzyu@gmail.com`) if multiple Google accounts are signed into Chrome. The script auto-routes requests and download URLs (`authuser=N`).
+- **Auto-upgrade**: `scripts/sprite_gen.py` checks and automatically upgrades dependencies from `requirements.txt` if `gemini_webapi < 2.1.1`.
 
 ---
+
 
 ## Auto-Inference Rules
 

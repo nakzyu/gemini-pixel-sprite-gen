@@ -17,20 +17,29 @@ CATEGORIES = ["character", "item", "tile", "effect", "ui", "background"]
 
 
 def _ensure_dependencies():
-    """Install missing dependencies from requirements.txt."""
+    """Install missing or outdated dependencies from requirements.txt."""
+    need_install = False
     try:
-        import gemini_webapi  # noqa: F401
+        import gemini_webapi
         from PIL import Image  # noqa: F401
         import numpy  # noqa: F401
-    except ImportError:
+        ver = getattr(gemini_webapi, "__version__", "0.0.0")
+        ver_nums = [int(p) for p in re.findall(r"\d+", ver)[:3]]
+        if ver_nums < [2, 1, 1]:
+            print(f"gemini_webapi version {ver} is outdated (>=2.1.1 required). Upgrading...", file=sys.stderr)
+            need_install = True
+    except (ImportError, Exception):
+        need_install = True
+
+    if need_install:
         req_file = Path(__file__).parent / "requirements.txt"
-        print(f"Installing dependencies from {req_file.name}...")
+        print(f"Installing dependencies from {req_file.name}...", file=sys.stderr)
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install", "-r", str(req_file)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        print("Installation complete.")
+        print("Installation complete.", file=sys.stderr)
 
 
 _ensure_dependencies()
@@ -273,9 +282,53 @@ def _clear_cookie_cache():
             print(f"Cleared stale cookie cache: {f.name}", file=sys.stderr)
 
 
+async def _switch_to_account(client: GeminiClient, target_email: str):
+    """If target_email is specified, find its user index in Google multi-login and patch endpoints."""
+    import re
+    import gemini_webapi.client as cl
+    import gemini_webapi.utils.upload_file as uf
+    found_idx = None
+    for u in range(5):
+        try:
+            resp = await client.client.get(f"https://gemini.google.com/u/{u}/app")
+            if target_email in resp.text:
+                found_idx = u
+                token_m = re.search(r'"SNlM0e":\s*"(.*?)"', resp.text)
+                build_m = re.search(r'"cfb2h":\s*"(.*?)"', resp.text)
+                if token_m:
+                    client.access_token = token_m.group(1)
+                if build_m:
+                    client.build_label = build_m.group(1)
+                break
+        except Exception:
+            continue
+    if found_idx is not None:
+        class SelectedEndpoint:
+            GOOGLE = "https://www.google.com"
+            INIT = f"https://gemini.google.com/u/{found_idx}/app"
+            GENERATE = f"https://gemini.google.com/u/{found_idx}/_/BardChatUi/data/assistant.lamda.BardFrontendService/StreamGenerate"
+            ROTATE_COOKIES = "https://accounts.google.com/RotateCookies"
+            UPLOAD = "https://content-push.googleapis.com/upload"
+            BATCH_EXEC = f"https://gemini.google.com/u/{found_idx}/_/BardChatUi/data/batchexecute"
+        import gemini_webapi.constants as const
+        import gemini_webapi.utils.get_access_token as gat
+        import gemini_webapi.utils.rotate_1psidts as r1
+        cl.Endpoint = SelectedEndpoint
+        uf.Endpoint = SelectedEndpoint
+        gat.Endpoint = SelectedEndpoint
+        const.Endpoint = SelectedEndpoint
+        r1.Endpoint = SelectedEndpoint
+        cl.Headers.REFERER.value["Referer"] = f"https://gemini.google.com/u/{found_idx}/"
+        client.user_index = found_idx
+        print(f"Using Google account: {target_email} (at /u/{found_idx})", file=sys.stderr)
+    else:
+        print(f"Warning: Could not find account {target_email} in Chrome session", file=sys.stderr)
+
+
 async def create_client(timeout: int = 450) -> GeminiClient:
     """Create a Gemini client via browser cookie auto-extraction.
     Auto-clears cookie cache and retries if UNAUTHENTICATED."""
+    import os
     from gemini_webapi.constants import AccountStatus
 
     for attempt in range(2):
@@ -288,6 +341,10 @@ async def create_client(timeout: int = 450) -> GeminiClient:
                 await client.close()
                 _clear_cookie_cache()
                 continue
+
+            target_account = os.environ.get("GEMINI_ACCOUNT", "nakzyu@gmail.com")
+            if target_account:
+                await _switch_to_account(client, target_account)
 
             return client
         except Exception as e:
@@ -316,7 +373,8 @@ def _patch_parse_candidate():
 
     def _patched(self, candidate_data, cid, rid, rcid):
         result = _original(self, candidate_data, cid, rid, rcid)
-        text, thoughts, web_images, generated_images, generated_videos, generated_media = result
+        text, thoughts, web_images, generated_images, generated_videos, generated_media, *rest = result
+        citations = rest[0] if rest else []
 
         # If no generated images found, check for dict structure
         if not generated_images:
@@ -327,9 +385,7 @@ def _patch_parse_candidate():
                     for img_idx, item in enumerate(items):
                         url = None
                         try:
-                            # item structure: [[[None, None, None, [None, 1, 'file.png', 'https://...', ...]]]]
                             url_data = item[0][0][3]
-                            # Find the googleusercontent URL in the list
                             for v in url_data:
                                 if isinstance(v, str) and 'googleusercontent.com' in v:
                                     url = v
@@ -359,6 +415,8 @@ def _patch_parse_candidate():
             except Exception:
                 pass
 
+        if rest:
+            return text, thoughts, web_images, generated_images, generated_videos, generated_media, citations
         return text, thoughts, web_images, generated_images, generated_videos, generated_media
 
     GeminiClient._parse_candidate = _patched
@@ -367,58 +425,74 @@ _patch_parse_candidate()
 
 
 async def _download_image(client, url: str, output_path: Path):
-    """Download image using the library's internal authenticated session directly."""
+    """Download image using the library's internal authenticated session directly,
+    following Google's chained redirect protocol with multi-account authuser support,
+    with local Chrome cache fallback."""
     inner_session = getattr(client, 'client', None)
-    if not inner_session:
-        raise RuntimeError("No internal session available for image download")
+    u_idx = getattr(client, "user_index", None)
+    referer = f"https://gemini.google.com/u/{u_idx}/" if u_idx is not None else "https://gemini.google.com/"
+    headers = {"Referer": referer}
 
-    headers = {"Referer": "https://gemini.google.com/"}
+    def _prepare_url(u: str) -> str:
+        if u_idx is not None and "authuser=" not in u:
+            sep = "&" if "?" in u else "?"
+            u = f"{u}{sep}authuser={u_idx}&alr=yes"
+        return u
 
-    # Build a set of URL variants to try — different suffixes resolve differently
-    base_url = url
-    for suffix in ["=s2048-rj", "=s1024-rj", "=s512-rj", "=d-I?alr=yes"]:
-        if suffix in base_url:
-            base_url = base_url.replace(suffix, "")
-            break
-
-    urls_to_try = [
-        url,                         # original URL as-is
-        base_url + "=s1024-rj",      # preview size
-        base_url + "=s512-rj",       # smaller preview
-        base_url,                    # bare URL (no suffix)
-        base_url + "=s2048-rj",     # full size
-    ]
-    # Deduplicate while preserving order
-    seen = set()
-    urls_to_try = [u for u in urls_to_try if not (u in seen or seen.add(u))]
-
+    cur_url = _prepare_url(url)
     last_status = None
-    for try_url in urls_to_try:
-        resp = await inner_session.get(try_url, headers=headers)
-        if resp.status_code == 200 and len(resp.content) > 100:
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            output_path.write_bytes(resp.content)
-            return
-        last_status = resp.status_code
-
-    # Last resort: create a fresh client with new cookies and retry
-    try:
-        fresh_client = await create_client(timeout=30)
-        fresh_session = getattr(fresh_client, 'client', None)
-        if fresh_session:
-            for try_url in urls_to_try:
-                resp = await fresh_session.get(try_url, headers=headers)
-                if resp.status_code == 200 and len(resp.content) > 100:
+    for hop in range(6):
+        try:
+            resp = await inner_session.get(cur_url, headers=headers)
+            last_status = resp.status_code
+            if resp.status_code == 200:
+                ct = resp.headers.get("content-type", "").lower()
+                if ct.startswith("image/") or (len(resp.content) > 1000 and resp.content.startswith((b'\x89PNG', b'\xff\xd8\xff', b'RIFF'))):
                     output_path.parent.mkdir(parents=True, exist_ok=True)
                     output_path.write_bytes(resp.content)
-                    await fresh_client.close()
                     return
-                last_status = resp.status_code
-            await fresh_client.close()
+                text = resp.text.strip()
+                if text.startswith("https://"):
+                    cur_url = _prepare_url(text)
+                    continue
+        except Exception:
+            pass
+
+    # Fallback: Chrome local cache
+    try:
+        cache_dir = Path.home() / "Library/Caches/Google/Chrome/Default/Cache/Cache_Data"
+        if cache_dir.exists():
+            import time
+            from PIL import Image as PILImage
+            import io
+            now = time.time()
+            candidates = []
+            for f in cache_dir.iterdir():
+                if f.name.startswith(("index", "data_")):
+                    continue
+                mtime = f.stat().st_mtime
+                if now - mtime < 600:
+                    data = f.read_bytes()
+                    idx_png = data.find(b"\x89PNG\r\n\x1a\n")
+                    idx_jpg = data.find(b"\xff\xd8\xff")
+                    if idx_png != -1 or idx_jpg != -1:
+                        candidates.append((f, mtime, data, idx_png, idx_jpg))
+            candidates.sort(key=lambda x: x[1], reverse=True)
+            for f, mtime, data, idx_png, idx_jpg in candidates:
+                for idx in [idx_png, idx_jpg]:
+                    if idx != -1:
+                        try:
+                            im = PILImage.open(io.BytesIO(data[idx:]))
+                            output_path.parent.mkdir(parents=True, exist_ok=True)
+                            im.save(output_path, "PNG")
+                            return
+                        except Exception:
+                            pass
     except Exception:
         pass
 
     raise RuntimeError(f"Image download failed after all attempts, last status: {last_status}")
+
 
 
 # ---------------------------------------------------------------------------
@@ -470,42 +544,31 @@ async def cmd_generate(output_dir: Path, description: str, name: str | None,
         if session_name:
             saved = load_session(output_dir, session_name)
             if saved:
-                chat = client.start_chat(metadata=saved["metadata"], model=Model.BASIC_PRO)
+                chat = client.start_chat(metadata=saved["metadata"], model="gemini-pro")
                 try:
                     response = await chat.send_message(description, files=file_paths)
                 except Exception as e:
                     # Session likely deleted on Gemini's side — clean up and start fresh
                     print(f"Session '{session_name}' expired on Gemini, starting fresh: {e}", file=sys.stderr)
                     delete_session(output_dir, session_name)
-                    chat = client.start_chat(model=Model.BASIC_PRO)
+                    chat = client.start_chat(model="gemini-pro")
                     response = await chat.send_message(description, files=file_paths)
             else:
-                chat = client.start_chat(model=Model.BASIC_PRO)
+                chat = client.start_chat(model="gemini-pro")
                 response = await chat.send_message(description, files=file_paths)
             # session metadata saved after sprite entry is created (below)
             _chat_to_save = chat
         else:
             _chat_to_save = None
-            response = await client.generate_content(description, files=file_paths, model=Model.BASIC_PRO)
+            response = await client.generate_content(description, files=file_paths, model="gemini-pro")
 
         if response.images:
             image = response.images[0]
-            saved_ok = False
-            # Try library save (full size first, then preview size)
-            for full_size in [True, False]:
-                try:
-                    await image.save(path=str(category_dir), filename=filename, full_size=full_size)
-                    saved_ok = True
-                    break
-                except Exception:
-                    continue
-            if not saved_ok:
-                # Fallback: download with authenticated session
-                image_url = getattr(image, 'url', None)
-                if image_url:
-                    await _download_image(client, image_url, output_path)
-                else:
-                    raise RuntimeError("No image URL available for download")
+            image_url = getattr(image, 'url', None)
+            if image_url:
+                await _download_image(client, image_url, output_path)
+            else:
+                raise RuntimeError("No image URL available for download")
         elif response.text and re.search(r'https?://[^\s]*googleusercontent\.com/[^\s]+', response.text):
             # Fallback: library didn't parse the image URL, download directly
             url = re.search(r'https?://[^\s]*googleusercontent\.com/[^\s]+', response.text).group(0)
