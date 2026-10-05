@@ -144,7 +144,7 @@ and after **180s (3 min)** without success kills it, `end-session`s, and retries
 Stop on the first `"success": true`. This punches through the intermittent
 quota/cookie stalls without babysitting. This is `scripts/gen_retry.sh`
 (single job, also stops on the image-limit message) and `scripts/batch_gen.sh`
-(a whole jobs.json) — see SKILL.md "Recommended character workflow".
+(a whole jobs.json) — see SKILL.md "Grid 1:1 snap + batch tools".
 
 **HARD GATE — never call `sprite_gen.py generate` for a brand-new subject
 without an anchor in `--files`.** If the project has no canonical reference

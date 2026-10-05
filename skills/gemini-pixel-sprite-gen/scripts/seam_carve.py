@@ -1,4 +1,6 @@
-# 세로 이음매 1줄 빼기(seam carving): 지정한 얼굴 줄은 정한 열을 지나고, 나머지 줄은 옆 칸과 같은 색(빼도 티 안 나는 칸)을 따라간다.
+# seam_carve.py (library) — remove one vertical seam to make a region 1 px narrower without stamping blocks.
+# carve(im, forced={y: x}) forces the seam through column x on the given rows; elsewhere it follows pixels that
+# equal a horizontal neighbour (removable without visible change).
 from PIL import Image
 def _px(im,x,y):
     if x<0 or x>=im.width: return (0,0,0,0)

@@ -5,14 +5,11 @@ Gemini draws on a fixed block grid, but the period finder can lock onto a half o
 grid. This tries the candidate periods (small, large, small x2) and keeps the one whose
 downscaled content height is closest to --target-h blocks, then runs native_snap with the
 search window pinned around that period. If the x/y periods disagree slightly it forces
-their average.
-
-Size gate (manual): compare the result's char height to the existing idle sprite of the
-same character — accept roughly 0.85x to 1.5x, regenerate otherwise.
+their average. Use the project's sprite_spec.yaml values for --target-h / --cell-h.
 
 usage: snap_char.py RAW OUT [--monster] [--idle] [--target-h N] [--cell-h N]
   --idle     keep green-ish real colors (no despill; despill is for attack swing trails)
-  --monster  defaults target-h 64 / cell-h 72 instead of 34 / 48
+  --monster  defaults target-h 64 / cell-h 72 instead of 32 / 48
 """
 import argparse
 import os
@@ -32,10 +29,10 @@ def main():
     ap.add_argument("out")
     ap.add_argument("--monster", action="store_true", help="monster defaults (target 64 blocks, cell 72)")
     ap.add_argument("--idle", action="store_true", help="idle pose: skip green despill")
-    ap.add_argument("--target-h", type=int, help="expected content height in blocks (default 34, monster 64)")
+    ap.add_argument("--target-h", type=int, help="expected content height in blocks (default 32, monster 64)")
     ap.add_argument("--cell-h", type=int, help="output cell height in px (default 48, monster 72)")
     a = ap.parse_args()
-    target = a.target_h or (64 if a.monster else 34)
+    target = a.target_h or (64 if a.monster else 32)
     cell_h = a.cell_h or (72 if a.monster else 48)
 
     arr = np.array(Image.open(a.raw).convert("RGBA"))

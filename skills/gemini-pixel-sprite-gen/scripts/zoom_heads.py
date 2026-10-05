@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 머리 부분 확대 비교: 줄마다 이미지들(쉼표) — 각 그림의 맨 위부터 n줄, 칸 격자
+# zoom_heads.py — enlarged top N rows of each sprite with a pixel grid; each arg is one row of comma-separated images
 import sys
 from PIL import Image, ImageDraw
 if len(sys.argv) < 5: print('usage: zoom_heads.py SCALE TOP_ROWS OUT.png a.png,b.png [c.png,d.png ...]'); sys.exit(2)

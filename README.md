@@ -105,30 +105,20 @@ Output: `<char>_<action>.png` only. No upscaled `_display.png`, no `_1x1` suffix
 
 ---
 
-## Character workflow (grid 1:1, recommended)
+## Grid 1:1 snap + batch tools
 
-The workflow the skill now prefers for characters (details in
-`skills/gemini-pixel-sprite-gen/SKILL.md` → "Recommended character workflow"):
-
-1. **Idle** with 2 references: the canonical style ref + a liked same-family sprite
-   upscaled 12x; the prompt copies only its face, block size and outline, and spells
-   out the 3/4 eye spec (eyebrow row, 2-row eyes, viewer's-left eye 2 wide, right eye
-   1 wide, 2 skin blocks between).
-2. **Downscale 1:1** to the source block grid — `snap_char.py` (wraps `native_snap.py`).
-3. **Size gate** — snapped height 0.85x–1.5x of the existing idle, else regenerate.
-4. **Attacks** keep the idle face: `head_swap.py idle.png attack.png out.png [--box|--crown|--imax X]`.
-5. **Gemini rules** — kill & retry a generate after 3 min, stop on the image-limit
-   message (~30–35 images / 5 h): `gen_retry.sh`; whole batches from a `jobs.json`:
-   `batch_gen.sh WORKDIR`.
+Optional alternative to `snap_single.py`, plus helpers for unattended runs (details in
+`skills/gemini-pixel-sprite-gen/SKILL.md` → "Grid 1:1 snap + batch tools"):
 
 | script | does |
 |---|---|
-| `native_snap.py` / `native_snap_half.py` | find the Gemini block grid, copy 1 block → 1 px (half-grid variant merges 2×2) |
-| `snap_char.py` | pick the grid period by target height, then `native_snap` |
-| `head_swap.py` | paste the idle head onto an attack frame, recolor to the idle palette |
-| `gen_retry.sh` / `batch_gen.sh` | generate with the 3-min / image-limit rules; batch generate → QC → snap |
-| `face_zoom.py` / `zoom_heads.py` | enlarged face / head comparison sheets with block grid |
-| `seam_carve.py` / `rowdrop.py` / `eye_transplant.py` / `find_holes.py` | small manual face/pixel fixes |
+| `native_snap.py` / `native_snap_half.py` | find Gemini's block grid and copy 1 block → 1 px (half-grid variant merges 2×2) — no resampling |
+| `snap_char.py` | pick the grid period whose height is closest to `--target-h`, then `native_snap` |
+| `gen_retry.sh` | one generate; kill + retry in a fresh session after 3 min, stop on Gemini's image-limit message |
+| `batch_gen.sh` | `jobs.json` → generate → `qc_frame` → `snap_char` → `results.tsv` (resumable) |
+| `head_swap.py` | paste one frame's head onto another frame of the same character (identical face) |
+| `face_zoom.py` / `zoom_heads.py` | enlarged face / head comparison sheets with a pixel grid |
+| `seam_carve.py` / `rowdrop.py` / `eye_transplant.py` / `find_holes.py` | small manual pixel fixes |
 
 ---
 

@@ -24,7 +24,7 @@ FARGS=(); [ -n "$FILES" ] && FARGS=(--files "$FILES")
 for attempt in $(seq 1 "$TRIES"); do
   SESS="${NAME}-$(date +%m%d%H%M%S)-$attempt"
   LOG="$LOGS/${NAME}_${attempt}.log"
-  python3 "$SG" generate "$PROMPT" --output-dir "$OUT" --name "$NAME" --category "$CAT" --session "$SESS" "${FARGS[@]}" > "$LOG" 2>&1 &
+  python3 "$SG" generate "$PROMPT" --output-dir "$OUT" --name "$NAME" --category "$CAT" --session "$SESS" ${FARGS[@]+"${FARGS[@]}"} > "$LOG" 2>&1 &
   PID=$!
   for _ in $(seq 1 $(( TMO / 5 ))); do perl -e 'select(undef,undef,undef,5)'; kill -0 $PID 2>/dev/null || break; done
   if kill -0 $PID 2>/dev/null; then

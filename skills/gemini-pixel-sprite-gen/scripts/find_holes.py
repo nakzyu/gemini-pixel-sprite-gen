@@ -1,4 +1,4 @@
-# 바깥과 이어지지 않은 투명 칸(구멍) 찾기
+# find_holes.py a.png [b.png ...] — list transparent pixels not connected to the outside (interior holes)
 import sys
 from PIL import Image
 from collections import deque

@@ -212,62 +212,34 @@ Read `${CLAUDE_SKILL_DIR}/PIXEL_ART_PIPELINE.md` before starting the character
 pipeline; it covers references, prompt template, h-tuning compare grid,
 normalize, engine import, and known failure modes.
 
-### Recommended character workflow (grid 1:1 — supersedes `snap_single.py` for characters)
+### Grid 1:1 snap + batch tools (optional alternative to `snap_single.py`)
 
-Gemini draws on a fixed block grid, so the best downscale is no resampling at all:
-find the grid and copy one source block → one output pixel. Everything below runs from
-`${CLAUDE_SKILL_DIR}/scripts/`; every CLI prints usage when run without args.
+Gemini draws on a fixed block grid, so a raw image can be downscaled with no resampling
+at all: find the grid and copy one source block → one output pixel. All scripts live in
+`${CLAUDE_SKILL_DIR}/scripts/` and print usage when run without args.
 
-1. **Idle = 2 reference images.** `--files base_ref.png,liked_12x.png` where image 1
-   is the project's canonical style reference and image 2 is an already-approved
-   sprite of the *same family/class* that the user likes, upscaled 12x nearest
-   (`python3 -c "from PIL import Image; i=Image.open('a.png'); i.resize((i.width*12,i.height*12),Image.NEAREST).save('a_12x.png')"`).
-   The prompt says: copy ONLY image 2's face (eye size/shape, eyebrow row, face width),
-   pixel-block size, outline and shading — NOT its outfit, hair or weapon; and keep the
-   figure EXACTLY as big as image 2 (state its block height). One reference only →
-   the face comes out like a stranger's; `batch_gen.sh` refuses such idle jobs.
-2. **Eye spec (right-facing 3/4 view)** — put it in the prompt and check it after:
-   one dark eyebrow row directly above the eyes; each eye 2 rows tall; the eye on the
-   VIEWER'S LEFT is 2 blocks wide, the VIEWER'S RIGHT eye 1 block wide; 2 skin blocks
-   between them; tiny highlight; small eyes, not anime eyes.
-3. **Downscale 1:1.** `snap_char.py RAW OUT [--idle] [--monster] [--target-h N --cell-h N]`
-   picks the grid period whose block height is closest to the target (default 34
-   blocks, monster 64) and runs `native_snap.py` (pass `--idle` so real green colors
-   are not despilled; despill is for attack swing trails). `native_snap_half.py` is the
-   fallback for raws drawn on a half-block grid (2×2 merge).
-4. **Size gate.** Compare the snapped char height with the existing idle of that
-   character: accept about **0.85x–1.5x**, regenerate outside that. Also run
-   `qc_frame.py RAW --kind idle|action|swing` (clipping/transparency) before snapping.
-5. **Zoom before showing.** `face_zoom.py 8 out.png new.png,ref.png` (face window, block
-   grid) and `zoom_heads.py 8 14 out.png ...` (top N rows) — compare the face block by
-   block against the eye spec before presenting a candidate to the user.
-6. **Attacks reuse the idle head.** Generate the attack with `--files idle.png,base_ref.png`
-   (pose change only, head front-facing), snap it, then
-   `head_swap.py IDLE.png CAND.png OUT.png [--atk CUR_ATTACK.png]` pastes the idle head
-   (aligned on face center + chin row) so the face is identical to idle, and recolors
-   near-palette body pixels to the idle palette. Modes: default *tight* (clears only the
-   pasted head + candidate face box — raised weapons/hair survive); `--box` (candidate
-   head much bigger than idle); `--crown` (candidate crown sticks out above the pasted
-   head — erases only head/outline colors there); `--imax X` (cut a staff tip etc. that
-   is glued to the idle head at column X). Face detection uses the `skin()` color ranges
-   at the top of `head_swap.py` — adjust them if your palette's skin tones differ.
-7. **Face surgery helpers** (manual, rarely needed): `seam_carve.py` (remove one vertical
-   seam, e.g. a 6-block face → 5 without block stamping), `rowdrop.py` (drop one row),
-   `eye_transplant.py` (copy an eye block from a reference, remapping skin colors),
-   `find_holes.py` / `fill_holes.py` (interior transparent holes).
+| script | does |
+|---|---|
+| `native_snap.py RAW OUT [--despill] [--main] [--flip]` | find the block grid (period + phase), copy 1 block → 1 px, bottom-center into a cell. `--despill` turns green-tinted pixels (semi-transparent swing trails) white — not for frames whose real colors are green |
+| `native_snap_half.py RAW OUT` | same for raws drawn on a half-block grid (samples the fine grid, merges 2×2) |
+| `snap_char.py RAW OUT [--target-h N] [--cell-h N] [--monster] [--idle]` | Gemini sometimes reads as a half/double grid — tries the candidate periods and keeps the one whose height is closest to `--target-h` blocks, then runs `native_snap` (`--idle` = no despill). Take target/cell from `sprite_spec.yaml` (defaults 32/48, monster 64/72) |
+| `head_swap.py SRC OUT_FRAME OUT [--box\|--crown] [--imax X] [--skin HEX,..]` | paste the head of one frame (e.g. the approved idle) onto another frame of the same character so the face is identical; recolors near-palette pixels to the source palette. Default clears only the pasted head + face box; `--box` clears top..chin (target head much bigger); `--crown` erases a crown sticking out above the pasted head; `--imax X` cuts a prop glued to the head. Pass `--skin` with your skin colors (built-in fallback only knows light skin) |
+| `face_zoom.py` / `zoom_heads.py` | enlarged face / top-rows comparison sheets with a pixel grid, for inspecting candidates side by side |
+| `seam_carve.py`, `rowdrop.py` (libraries), `eye_transplant.py`, `find_holes.py` | small manual fixes: remove one vertical seam / one row, copy a pixel block with color remap, list interior transparent holes |
 
 **Gemini timing & limits.** A healthy generate finishes in ~1–2 min. Over **3 minutes**
-= stuck: kill it and retry in a *fresh* session (never wait longer). If the reply
-contains the image-limit message (`... limit resets ...`), stop — retries are useless.
-Budget about **30–35 images per 5 hours** per account. `gen_retry.sh NAME FILES PROMPT_FILE`
-implements both rules (prints `OK <raw>` / `LIMIT`).
+it is stuck: kill it and retry in a *fresh* session (never wait longer). If the reply
+contains Gemini's image-limit message (`... limit resets ...`), stop — retries are useless
+until the limit resets. `gen_retry.sh NAME FILES PROMPT_FILE` implements both rules
+(prints `OK <raw path>`, or `LIMIT` with exit 3). Env: `OUT_DIR`, `LOG_DIR`, `CATEGORY`,
+`TIMEOUT_S` (180), `ATTEMPTS` (4).
 
 **Batch.** `batch_gen.sh WORKDIR` runs `WORKDIR/jobs.json`
 (`[{"name","files","kind":"idle|action|swing","monster":bool,"idle":bool}]`, prompt in
-`WORKDIR/prompts/<name>.txt`): generate → `qc_frame` → `snap_char` → one row per job in
-`WORKDIR/results.tsv` (`name raw qc snap`), snapped files in `WORKDIR/snap/`. Re-running
-skips finished rows, so after an image limit just run it again later. Env: `OUT_DIR`
-(raw output, default `WORKDIR/raw`), `TIMEOUT_S`, `ATTEMPTS`, `CATEGORY`.
+`WORKDIR/prompts/<name>.txt`): `gen_retry.sh` → `qc_frame.py` → `snap_char.py`, one row per
+job in `WORKDIR/results.tsv` (`name raw qc snap`), snapped files in `WORKDIR/snap/`.
+Finished rows are skipped, so after an image limit just run it again later. Env: `OUT_DIR`
+(raw output, default `WORKDIR/raw`), `SNAP_ARGS` (e.g. `--target-h 34`) + the `gen_retry.sh` vars.
 
 ---
 

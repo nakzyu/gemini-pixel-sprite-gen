@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# 얼굴 확대(피부 덩어리 기준, 칸 격자) — 줄마다 그림들(쉼표). head_swap.head_info 로 얼굴 창을 찾는다
+# face_zoom.py — enlarged face crops with a pixel grid, located via head_swap.head_info (falls back to bbox)
 # usage: face_zoom.py SCALE OUT.png a.png,b.png [c.png,d.png ...]   (each arg = one row; compare faces block by block)
 import sys
 from PIL import Image, ImageDraw
