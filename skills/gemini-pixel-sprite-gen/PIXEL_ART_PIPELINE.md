@@ -133,8 +133,7 @@ out in prose. Show, don't tell.
 
 **Generation timing & stall recovery (3-minute rule).** A healthy `generate`
 finishes in ~50s–2min. It HANGS when the log reaches `StreamGenerate [200]` then
-goes silent (cookie flicker or image-gen quota — see the gemini-gen-stalls
-memory). **Rule: if a single generate exceeds 3 MINUTES with no `"success"`,
+goes silent (cookie flicker or image-gen quota). **Rule: if a single generate exceeds 3 MINUTES with no `"success"`,
 KILL it and retry with a FRESH unique session name.** Never wait longer than 3
 min on one attempt. Don't pipe the gen through `tail` in the background (it
 buffers and hides the live log) — redirect to a file and watch it.
@@ -143,8 +142,9 @@ For unattended runs use an **auto-retry-until-success loop**: each iteration
 starts the gen in the background with a fresh session, polls the log every 15s,
 and after **180s (3 min)** without success kills it, `end-session`s, and retries.
 Stop on the first `"success": true`. This punches through the intermittent
-quota/cookie stalls without babysitting. (Pattern used for the whole mage +
-cleric batch; the script lived at /tmp/*_retry.sh.)
+quota/cookie stalls without babysitting. This is `scripts/gen_retry.sh`
+(single job, also stops on the image-limit message) and `scripts/batch_gen.sh`
+(a whole jobs.json) — see SKILL.md "Recommended character workflow".
 
 **HARD GATE — never call `sprite_gen.py generate` for a brand-new subject
 without an anchor in `--files`.** If the project has no canonical reference

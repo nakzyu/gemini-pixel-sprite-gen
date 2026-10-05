@@ -12,7 +12,8 @@ Output is engine-agnostic: chunky-pixel `<char>_<action>.png` files with binary 
 ## Requirements
 
 - Python 3.10+
-- Google Gemini subscription (logged in to gemini.google.com in Chrome or Firefox)
+- Google Gemini subscription (logged in to gemini.google.com in Chrome or Firefox — cookies are read from the browser, nothing is stored in the repo)
+- Several Google accounts in one browser? Set `GEMINI_ACCOUNT=you@example.com` or write the email to `~/.config/gemini-pixel-sprite-gen/account`
 - Claude Code
 
 ---
@@ -101,6 +102,33 @@ The snap pipeline:
 6. Bottom-center align (feet at `cell_h - PAD`, x-centered).
 
 Output: `<char>_<action>.png` only. No upscaled `_display.png`, no `_1x1` suffix.
+
+---
+
+## Character workflow (grid 1:1, recommended)
+
+The workflow the skill now prefers for characters (details in
+`skills/gemini-pixel-sprite-gen/SKILL.md` → "Recommended character workflow"):
+
+1. **Idle** with 2 references: the canonical style ref + a liked same-family sprite
+   upscaled 12x; the prompt copies only its face, block size and outline, and spells
+   out the 3/4 eye spec (eyebrow row, 2-row eyes, viewer's-left eye 2 wide, right eye
+   1 wide, 2 skin blocks between).
+2. **Downscale 1:1** to the source block grid — `snap_char.py` (wraps `native_snap.py`).
+3. **Size gate** — snapped height 0.85x–1.5x of the existing idle, else regenerate.
+4. **Attacks** keep the idle face: `head_swap.py idle.png attack.png out.png [--box|--crown|--imax X]`.
+5. **Gemini rules** — kill & retry a generate after 3 min, stop on the image-limit
+   message (~30–35 images / 5 h): `gen_retry.sh`; whole batches from a `jobs.json`:
+   `batch_gen.sh WORKDIR`.
+
+| script | does |
+|---|---|
+| `native_snap.py` / `native_snap_half.py` | find the Gemini block grid, copy 1 block → 1 px (half-grid variant merges 2×2) |
+| `snap_char.py` | pick the grid period by target height, then `native_snap` |
+| `head_swap.py` | paste the idle head onto an attack frame, recolor to the idle palette |
+| `gen_retry.sh` / `batch_gen.sh` | generate with the 3-min / image-limit rules; batch generate → QC → snap |
+| `face_zoom.py` / `zoom_heads.py` | enlarged face / head comparison sheets with block grid |
+| `seam_carve.py` / `rowdrop.py` / `eye_transplant.py` / `find_holes.py` | small manual face/pixel fixes |
 
 ---
 

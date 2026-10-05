@@ -23,7 +23,10 @@ def _ensure_dependencies():
         import gemini_webapi
         from PIL import Image  # noqa: F401
         import numpy  # noqa: F401
-        ver = getattr(gemini_webapi, "__version__", "0.0.0")
+        ver = getattr(gemini_webapi, "__version__", None)
+        if not ver:  # the package has no __version__ — read the installed dist metadata
+            from importlib.metadata import version as _dist_version
+            ver = _dist_version("gemini_webapi")
         ver_nums = [int(p) for p in re.findall(r"\d+", ver)[:3]]
         if ver_nums < [2, 1, 1]:
             print(f"gemini_webapi version {ver} is outdated (>=2.1.1 required). Upgrading...", file=sys.stderr)
@@ -325,6 +328,24 @@ async def _switch_to_account(client: GeminiClient, target_email: str):
         print(f"Warning: Could not find account {target_email} in Chrome session", file=sys.stderr)
 
 
+def _target_account() -> str:
+    """Google account to use when several are signed into the browser.
+
+    Order: $GEMINI_ACCOUNT, then the first line of
+    ~/.config/gemini-pixel-sprite-gen/account (local, never committed),
+    else "" (use the browser's default account, no switching).
+    """
+    import os
+    env = os.environ.get("GEMINI_ACCOUNT", "").strip()
+    if env:
+        return env
+    cfg = Path.home() / ".config" / "gemini-pixel-sprite-gen" / "account"
+    try:
+        return cfg.read_text().strip().splitlines()[0].strip()
+    except (OSError, IndexError):
+        return ""
+
+
 async def create_client(timeout: int = 450) -> GeminiClient:
     """Create a Gemini client via browser cookie auto-extraction.
     Auto-clears cookie cache and retries if UNAUTHENTICATED."""
@@ -342,7 +363,7 @@ async def create_client(timeout: int = 450) -> GeminiClient:
                 _clear_cookie_cache()
                 continue
 
-            target_account = os.environ.get("GEMINI_ACCOUNT", "nakzyu@gmail.com")
+            target_account = _target_account()
             if target_account:
                 await _switch_to_account(client, target_account)
 
@@ -433,7 +454,23 @@ async def _download_image(client, url: str, output_path: Path):
     referer = f"https://gemini.google.com/u/{u_idx}/" if u_idx is not None else "https://gemini.google.com/"
     headers = {"Referer": referer}
 
+    def _full_res(u: str) -> str:
+        """Request the ORIGINAL image, not the thumbnail.
+
+        A bare lh3.googleusercontent.com URL serves a ~512px-tall preview. The
+        `=s0` size directive returns the full-size original (e.g. 816x1300).
+        Snapping from the thumbnail costs ~6x the source pixels per native pixel
+        and turns chunky flat blocks into downsample noise.
+        """
+        if "googleusercontent.com" not in u or "?" in u:
+            return u
+        tail = u.rsplit("/", 1)[-1]
+        if "=" in tail:  # already carries a size directive
+            return u
+        return u + "=s0"
+
     def _prepare_url(u: str) -> str:
+        u = _full_res(u)
         if u_idx is not None and "authuser=" not in u:
             sep = "&" if "?" in u else "?"
             u = f"{u}{sep}authuser={u_idx}&alr=yes"
